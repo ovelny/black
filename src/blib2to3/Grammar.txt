@@ -12,11 +12,17 @@ file_input: (NEWLINE | stmt)* ENDMARKER
 single_input: NEWLINE | simple_stmt | compound_stmt NEWLINE
 eval_input: testlist NEWLINE* ENDMARKER
 
+typevar: NAME [':' expr] ['=' expr]
+paramspec: '**' NAME ['=' expr]
+typevartuple: '*' NAME ['=' (expr|star_expr)]
+typeparam: typevar | paramspec | typevartuple
+typeparams: '[' typeparam (',' typeparam)* [','] ']'
+
 decorator: '@' namedexpr_test NEWLINE
 decorators: decorator+
 decorated: decorators (classdef | funcdef | async_funcdef)
 async_funcdef: ASYNC funcdef
-funcdef: 'def' NAME parameters ['->' test] ':' suite
+funcdef: 'def' NAME [typeparams] parameters ['->' test] ':' suite
 parameters: '(' [typedargslist] ')'
 
 # The following definition for typedarglist is equivalent to this set of rules:
@@ -24,7 +30,7 @@ parameters: '(' [typedargslist] ')'
 #     arguments = argument (',' argument)*
 #     argument = tfpdef ['=' test]
 #     kwargs = '**' tname [',']
-#     args = '*' [tname]
+#     args = '*' [tname_star]
 #     kwonly_kwargs = (',' argument)* [',' [kwargs]]
 #     args_kwonly_kwargs = args kwonly_kwargs | kwargs
 #     poskeyword_args_kwonly_kwargs = arguments [',' [args_kwonly_kwargs]]
@@ -34,14 +40,15 @@ parameters: '(' [typedargslist] ')'
 # It needs to be fully expanded to allow our LL(1) parser to work on it.
 
 typedargslist: tfpdef ['=' test] (',' tfpdef ['=' test])* ',' '/' [
-                     ',' [((tfpdef ['=' test] ',')* ('*' [tname] (',' tname ['=' test])*
+                     ',' [((tfpdef ['=' test] ',')* ('*' [tname_star] (',' tname ['=' test])*
                             [',' ['**' tname [',']]] | '**' tname [','])
                      | tfpdef ['=' test] (',' tfpdef ['=' test])* [','])]
-                ] | ((tfpdef ['=' test] ',')* ('*' [tname] (',' tname ['=' test])*
+                ] | ((tfpdef ['=' test] ',')* ('*' [tname_star] (',' tname ['=' test])*
                      [',' ['**' tname [',']]] | '**' tname [','])
                      | tfpdef ['=' test] (',' tfpdef ['=' test])* [','])
 
 tname: NAME [':' test]
+tname_star: NAME [':' (test|star_expr)]
 tfpdef: tname | '(' tfplist ')'
 tfplist: tfpdef (',' tfpdef)* [',']
 
@@ -73,8 +80,8 @@ vfplist: vfpdef (',' vfpdef)* [',']
 
 stmt: simple_stmt | compound_stmt
 simple_stmt: small_stmt (';' small_stmt)* [';'] NEWLINE
-small_stmt: (expr_stmt | print_stmt  | del_stmt | pass_stmt | flow_stmt |
-             import_stmt | global_stmt | exec_stmt | assert_stmt)
+small_stmt: (type_stmt | expr_stmt | del_stmt | pass_stmt | flow_stmt |
+             import_stmt | global_stmt | assert_stmt)
 expr_stmt: testlist_star_expr (annassign | augassign (yield_expr|testlist) |
                      ('=' (yield_expr|testlist_star_expr))*)
 annassign: ':' test ['=' (yield_expr|testlist_star_expr)]
@@ -82,8 +89,6 @@ testlist_star_expr: (test|star_expr) (',' (test|star_expr))* [',']
 augassign: ('+=' | '-=' | '*=' | '@=' | '/=' | '%=' | '&=' | '|=' | '^=' |
             '<<=' | '>>=' | '**=' | '//=')
 # For normal and annotated assignments, additional restrictions enforced by the interpreter
-print_stmt: 'print' ( [ test (',' test)* [','] ] |
-                      '>>' test [ (',' test)+ [','] ] )
 del_stmt: 'del' exprlist
 pass_stmt: 'pass'
 flow_stmt: break_stmt | continue_stmt | return_stmt | raise_stmt | yield_stmt
@@ -102,8 +107,8 @@ import_as_names: import_as_name (',' import_as_name)* [',']
 dotted_as_names: dotted_as_name (',' dotted_as_name)*
 dotted_name: NAME ('.' NAME)*
 global_stmt: ('global' | 'nonlocal') NAME (',' NAME)*
-exec_stmt: 'exec' expr ['in' test [',' test]]
 assert_stmt: 'assert' test [',' test]
+type_stmt: "type" NAME [typeparams] '=' test
 
 compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated | async_stmt | match_stmt
 async_stmt: ASYNC (funcdef | with_stmt | for_stmt)
@@ -158,12 +163,12 @@ atom: ('(' [yield_expr|testlist_gexp] ')' |
        '[' [listmaker] ']' |
        '{' [dictsetmaker] '}' |
        '`' testlist1 '`' |
-       NAME | NUMBER | STRING+ | '.' '.' '.')
+       NAME | NUMBER | (STRING | fstring)+ | '.' '.' '.')
 listmaker: (namedexpr_test|star_expr) ( old_comp_for | (',' (namedexpr_test|star_expr))* [','] )
 testlist_gexp: (namedexpr_test|star_expr) ( old_comp_for | (',' (namedexpr_test|star_expr))* [','] )
 lambdef: 'lambda' [varargslist] ':' test
 trailer: '(' [arglist] ')' | '[' subscriptlist ']' | '.' NAME
-subscriptlist: subscript (',' subscript)* [',']
+subscriptlist: (subscript|star_expr) (',' (subscript|star_expr))* [',']
 subscript: test [':=' test] | [test] ':' [test] [sliceop]
 sliceop: ':' [test]
 exprlist: (expr|star_expr) (',' (expr|star_expr))* [',']
@@ -173,7 +178,7 @@ dictsetmaker: ( ((test ':' asexpr_test | '**' expr)
                 ((test [':=' test] | star_expr)
 		 (comp_for | (',' (test [':=' test] | star_expr))* [','])) )
 
-classdef: 'class' NAME ['(' [arglist] ')'] ':' suite
+classdef: 'class' NAME [typeparams] ['(' [arglist] ')'] ':' suite
 
 arglist: argument (',' argument)* [',']
 
@@ -185,7 +190,7 @@ arglist: argument (',' argument)* [',']
 # multiple (test comp_for) arguments are blocked; keyword unpackings
 # that precede iterable unpackings are blocked; etc.
 argument: ( test [comp_for] |
-            test ':=' test |
+            test ':=' test [comp_for] |
             test 'as' test |
             test '=' asexpr_test |
 	    '**' test |
@@ -249,3 +254,8 @@ case_block: "case" patterns [guard] ':' suite
 guard: 'if' namedexpr_test
 patterns: pattern (',' pattern)* [',']
 pattern: (expr|star_expr) ['as' expr]
+
+fstring: FSTRING_START fstring_middle* FSTRING_END
+fstring_middle: fstring_replacement_field | FSTRING_MIDDLE
+fstring_replacement_field: '{' (yield_expr | testlist_star_expr) ['='] [ "!" NAME ] [ ':' fstring_format_spec* ] '}'
+fstring_format_spec: FSTRING_MIDDLE | fstring_replacement_field

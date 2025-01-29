@@ -17,33 +17,22 @@ __all__ = ["Driver", "load_grammar"]
 
 # Python imports
 import io
-import os
 import logging
+import os
 import pkgutil
 import sys
-from typing import (
-    Any,
-    cast,
-    IO,
-    Iterable,
-    List,
-    Optional,
-    Text,
-    Iterator,
-    Tuple,
-    TypeVar,
-    Generic,
-    Union,
-)
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-
-# Pgen imports
-from . import grammar, parse, token, tokenize, pgen
 from logging import Logger
-from blib2to3.pytree import NL
+from typing import IO, Any, Optional, Union, cast
+
 from blib2to3.pgen2.grammar import Grammar
 from blib2to3.pgen2.tokenize import GoodTokenInfo
+from blib2to3.pytree import NL
+
+# Pgen imports
+from . import grammar, parse, pgen, token, tokenize
 
 Path = Union[str, "os.PathLike[str]"]
 
@@ -52,7 +41,7 @@ Path = Union[str, "os.PathLike[str]"]
 class ReleaseRange:
     start: int
     end: Optional[int] = None
-    tokens: List[Any] = field(default_factory=list)
+    tokens: list[Any] = field(default_factory=list)
 
     def lock(self) -> None:
         total_eaten = len(self.tokens)
@@ -63,7 +52,7 @@ class TokenProxy:
     def __init__(self, generator: Any) -> None:
         self._tokens = generator
         self._counter = 0
-        self._release_ranges: List[ReleaseRange] = []
+        self._release_ranges: list[ReleaseRange] = []
 
     @contextmanager
     def release(self) -> Iterator["TokenProxy"]:
@@ -107,7 +96,7 @@ class TokenProxy:
 
     def can_advance(self, to: int) -> bool:
         # Try to eat, fail if it can't. The eat operation is cached
-        # so there wont be any additional cost of eating here
+        # so there won't be any additional cost of eating here
         try:
             self.eat(to)
         except StopIteration:
@@ -116,7 +105,7 @@ class TokenProxy:
             return True
 
 
-class Driver(object):
+class Driver:
     def __init__(self, grammar: Grammar, logger: Optional[Logger] = None) -> None:
         self.grammar = grammar
         if logger is None:
@@ -133,7 +122,7 @@ class Driver(object):
 
         lineno = 1
         column = 0
-        indent_columns: List[int] = []
+        indent_columns: list[int] = []
         type = value = start = end = line_text = None
         prefix = ""
 
@@ -179,7 +168,9 @@ class Driver(object):
             if type in {token.INDENT, token.DEDENT}:
                 prefix = _prefix
             lineno, column = end
-            if value.endswith("\n"):
+            # FSTRING_MIDDLE is the only token that can end with a newline, and
+            # `end` will point to the next line. For that case, don't increment lineno.
+            if value.endswith("\n") and type != token.FSTRING_MIDDLE:
                 lineno += 1
                 column = 0
         else:
@@ -189,31 +180,31 @@ class Driver(object):
         assert p.rootnode is not None
         return p.rootnode
 
-    def parse_stream_raw(self, stream: IO[Text], debug: bool = False) -> NL:
+    def parse_stream_raw(self, stream: IO[str], debug: bool = False) -> NL:
         """Parse a stream and return the syntax tree."""
         tokens = tokenize.generate_tokens(stream.readline, grammar=self.grammar)
         return self.parse_tokens(tokens, debug)
 
-    def parse_stream(self, stream: IO[Text], debug: bool = False) -> NL:
+    def parse_stream(self, stream: IO[str], debug: bool = False) -> NL:
         """Parse a stream and return the syntax tree."""
         return self.parse_stream_raw(stream, debug)
 
     def parse_file(
-        self, filename: Path, encoding: Optional[Text] = None, debug: bool = False
+        self, filename: Path, encoding: Optional[str] = None, debug: bool = False
     ) -> NL:
         """Parse a file and return the syntax tree."""
-        with io.open(filename, "r", encoding=encoding) as stream:
+        with open(filename, encoding=encoding) as stream:
             return self.parse_stream(stream, debug)
 
-    def parse_string(self, text: Text, debug: bool = False) -> NL:
+    def parse_string(self, text: str, debug: bool = False) -> NL:
         """Parse a string and return the syntax tree."""
         tokens = tokenize.generate_tokens(
             io.StringIO(text).readline, grammar=self.grammar
         )
         return self.parse_tokens(tokens, debug)
 
-    def _partially_consume_prefix(self, prefix: Text, column: int) -> Tuple[Text, Text]:
-        lines: List[str] = []
+    def _partially_consume_prefix(self, prefix: str, column: int) -> tuple[str, str]:
+        lines: list[str] = []
         current_line = ""
         current_column = 0
         wait_for_nl = False
@@ -234,13 +225,15 @@ class Driver(object):
             elif char == "\n":
                 # unexpected empty line
                 current_column = 0
+            elif char == "\f":
+                current_column = 0
             else:
                 # indent is finished
                 wait_for_nl = True
         return "".join(lines), current_line
 
 
-def _generate_pickle_name(gt: Path, cache_dir: Optional[Path] = None) -> Text:
+def _generate_pickle_name(gt: Path, cache_dir: Optional[Path] = None) -> str:
     head, tail = os.path.splitext(gt)
     if tail == ".txt":
         tail = ""
@@ -252,8 +245,8 @@ def _generate_pickle_name(gt: Path, cache_dir: Optional[Path] = None) -> Text:
 
 
 def load_grammar(
-    gt: Text = "Grammar.txt",
-    gp: Optional[Text] = None,
+    gt: str = "Grammar.txt",
+    gp: Optional[str] = None,
     save: bool = True,
     force: bool = False,
     logger: Optional[Logger] = None,
@@ -263,21 +256,20 @@ def load_grammar(
         logger = logging.getLogger(__name__)
     gp = _generate_pickle_name(gt) if gp is None else gp
     if force or not _newer(gp, gt):
-        logger.info("Generating grammar tables from %s", gt)
         g: grammar.Grammar = pgen.generate_grammar(gt)
         if save:
-            logger.info("Writing grammar tables to %s", gp)
             try:
                 g.dump(gp)
-            except OSError as e:
-                logger.info("Writing failed: %s", e)
+            except OSError:
+                # Ignore error, caching is not vital.
+                pass
     else:
         g = grammar.Grammar()
         g.load(gp)
     return g
 
 
-def _newer(a: Text, b: Text) -> bool:
+def _newer(a: str, b: str) -> bool:
     """Inquire whether file a was written since file b."""
     if not os.path.exists(a):
         return False
@@ -287,7 +279,7 @@ def _newer(a: Text, b: Text) -> bool:
 
 
 def load_packaged_grammar(
-    package: str, grammar_source: Text, cache_dir: Optional[Path] = None
+    package: str, grammar_source: str, cache_dir: Optional[Path] = None
 ) -> grammar.Grammar:
     """Normally, loads a pickled grammar by doing
         pkgutil.get_data(package, pickled_grammar)
@@ -310,7 +302,7 @@ def load_packaged_grammar(
     return g
 
 
-def main(*args: Text) -> bool:
+def main(*args: str) -> bool:
     """Main program, when run as a script: produce grammar pickle files.
 
     Calls load_grammar for each argument, a path to a grammar text file.

@@ -4,6 +4,11 @@
 protocol. The main benefit of using it is to avoid the cost of starting up a new _Black_
 process every time you want to blacken a file.
 
+```{warning}
+`blackd` should not be run as a publicly accessible server as there are no security
+precautions in place to prevent abuse. **It is intended for local use only**.
+```
+
 ## Usage
 
 `blackd` is not packaged alongside _Black_ by default because it has additional
@@ -45,12 +50,24 @@ is rejected with `HTTP 501` (Not Implemented).
 The headers controlling how source code is formatted are:
 
 - `X-Line-Length`: corresponds to the `--line-length` command line flag.
+- `X-Skip-Source-First-Line`: corresponds to the `--skip-source-first-line` command line
+  flag. If present and its value is not an empty string, the first line of the source
+  code will be ignored.
 - `X-Skip-String-Normalization`: corresponds to the `--skip-string-normalization`
   command line flag. If present and its value is not the empty string, no string
   normalization will be performed.
 - `X-Skip-Magic-Trailing-Comma`: corresponds to the `--skip-magic-trailing-comma`
-  command line flag. If present and its value is not the empty string, trailing commas
+  command line flag. If present and its value is not an empty string, trailing commas
   will not be used as a reason to split lines.
+- `X-Preview`: corresponds to the `--preview` command line flag. If present and its
+  value is not an empty string, experimental and potentially disruptive style changes
+  will be used.
+- `X-Unstable`: corresponds to the `--unstable` command line flag. If present and its
+  value is not an empty string, experimental style changes that are known to be buggy
+  will be used.
+- `X-Enable-Unstable-Feature`: corresponds to the `--enable-unstable-feature` flag. The
+  contents of the flag must be a comma-separated list of unstable features to be
+  enabled. Example: `X-Enable-Unstable-Feature: feature1, feature2`.
 - `X-Fast-Or-Safe`: if set to `fast`, `blackd` will act as _Black_ does when passed the
   `--fast` command line flag.
 - `X-Python-Variant`: if set to `pyi`, `blackd` will act as _Black_ does when passed the

@@ -1,23 +1,24 @@
 import contextlib
-from dataclasses import replace
 import pathlib
 import re
+from contextlib import AbstractContextManager
 from contextlib import ExitStack as does_not_raise
-from typing import ContextManager
+from dataclasses import replace
 
+import pytest
+from _pytest.monkeypatch import MonkeyPatch
 from click.testing import CliRunner
-from black.handle_ipynb_magics import jupyter_dependencies_are_installed
+
 from black import (
-    main,
+    Mode,
     NothingChanged,
     format_cell,
     format_file_contents,
     format_file_in_place,
+    main,
 )
-import pytest
-from black import Mode
-from _pytest.monkeypatch import MonkeyPatch
-from tests.util import DATA_DIR
+from black.handle_ipynb_magics import jupyter_dependencies_are_installed
+from tests.util import DATA_DIR, get_case_path, read_jupyter_notebook
 
 with contextlib.suppress(ModuleNotFoundError):
     import IPython
@@ -76,7 +77,7 @@ def test_trailing_semicolon_noop() -> None:
     [
         pytest.param(JUPYTER_MODE, id="default mode"),
         pytest.param(
-            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust1"}),
+            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust2"}),
             id="custom cell magics mode",
         ),
     ],
@@ -99,7 +100,7 @@ def test_cell_magic_noop() -> None:
     [
         pytest.param(JUPYTER_MODE, id="default mode"),
         pytest.param(
-            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust1"}),
+            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust2"}),
             id="custom cell magics mode",
         ),
     ],
@@ -173,6 +174,22 @@ def test_cell_magic_with_magic() -> None:
 
 
 @pytest.mark.parametrize(
+    "src, expected",
+    (
+        ("\n\n\n%time \n\n", "%time"),
+        ("  \n\t\n%%timeit -n4 \t \nx=2  \n\r\n", "%%timeit -n4\nx = 2"),
+        (
+            "  \t\n\n%%capture \nx=2 \n%config \n\n%env\n\t  \n \n\n",
+            "%%capture\nx = 2\n%config\n\n%env",
+        ),
+    ),
+)
+def test_cell_magic_with_empty_lines(src: str, expected: str) -> None:
+    result = format_cell(src, fast=True, mode=JUPYTER_MODE)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
     "mode, expected_output, expectation",
     [
         pytest.param(
@@ -182,7 +199,7 @@ def test_cell_magic_with_magic() -> None:
             id="No change when cell magic not registered",
         ),
         pytest.param(
-            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust1"}),
+            replace(JUPYTER_MODE, python_cell_magics={"cust1", "cust2"}),
             "%%custom_python_magic -n1 -n2\nx=2",
             pytest.raises(NothingChanged),
             id="No change when other cell magics registered",
@@ -196,7 +213,7 @@ def test_cell_magic_with_magic() -> None:
     ],
 )
 def test_cell_magic_with_custom_python_magic(
-    mode: Mode, expected_output: str, expectation: ContextManager[object]
+    mode: Mode, expected_output: str, expectation: AbstractContextManager[object]
 ) -> None:
     with expectation:
         result = format_cell(
@@ -205,6 +222,22 @@ def test_cell_magic_with_custom_python_magic(
             mode=mode,
         )
         assert result == expected_output
+
+
+@pytest.mark.parametrize(
+    "src",
+    (
+        "   %%custom_magic \nx=2",
+        "\n\n%%custom_magic\nx=2",
+        "# comment\n%%custom_magic\nx=2",
+        "\n  \n # comment with %%time\n\t\n %%custom_magic # comment \nx=2",
+    ),
+)
+def test_cell_magic_with_custom_python_magic_after_spaces_and_comments_noop(
+    src: str,
+) -> None:
+    with pytest.raises(NothingChanged):
+        format_cell(src, fast=True, mode=JUPYTER_MODE)
 
 
 def test_cell_magic_nested() -> None:
@@ -252,9 +285,7 @@ def test_empty_cell() -> None:
 
 
 def test_entire_notebook_empty_metadata() -> None:
-    with open(DATA_DIR / "notebook_empty_metadata.ipynb", "rb") as fd:
-        content_bytes = fd.read()
-    content = content_bytes.decode()
+    content = read_jupyter_notebook("jupyter", "notebook_empty_metadata")
     result = format_file_contents(content, fast=True, mode=JUPYTER_MODE)
     expected = (
         "{\n"
@@ -289,9 +320,7 @@ def test_entire_notebook_empty_metadata() -> None:
 
 
 def test_entire_notebook_trailing_newline() -> None:
-    with open(DATA_DIR / "notebook_trailing_newline.ipynb", "rb") as fd:
-        content_bytes = fd.read()
-    content = content_bytes.decode()
+    content = read_jupyter_notebook("jupyter", "notebook_trailing_newline")
     result = format_file_contents(content, fast=True, mode=JUPYTER_MODE)
     expected = (
         "{\n"
@@ -338,9 +367,7 @@ def test_entire_notebook_trailing_newline() -> None:
 
 
 def test_entire_notebook_no_trailing_newline() -> None:
-    with open(DATA_DIR / "notebook_no_trailing_newline.ipynb", "rb") as fd:
-        content_bytes = fd.read()
-    content = content_bytes.decode()
+    content = read_jupyter_notebook("jupyter", "notebook_no_trailing_newline")
     result = format_file_contents(content, fast=True, mode=JUPYTER_MODE)
     expected = (
         "{\n"
@@ -387,17 +414,14 @@ def test_entire_notebook_no_trailing_newline() -> None:
 
 
 def test_entire_notebook_without_changes() -> None:
-    with open(DATA_DIR / "notebook_without_changes.ipynb", "rb") as fd:
-        content_bytes = fd.read()
-    content = content_bytes.decode()
+    content = read_jupyter_notebook("jupyter", "notebook_without_changes")
     with pytest.raises(NothingChanged):
         format_file_contents(content, fast=True, mode=JUPYTER_MODE)
 
 
 def test_non_python_notebook() -> None:
-    with open(DATA_DIR / "non_python_notebook.ipynb", "rb") as fd:
-        content_bytes = fd.read()
-    content = content_bytes.decode()
+    content = read_jupyter_notebook("jupyter", "non_python_notebook")
+
     with pytest.raises(NothingChanged):
         format_file_contents(content, fast=True, mode=JUPYTER_MODE)
 
@@ -408,7 +432,7 @@ def test_empty_string() -> None:
 
 
 def test_unparseable_notebook() -> None:
-    path = DATA_DIR / "notebook_which_cant_be_parsed.ipynb"
+    path = get_case_path("jupyter", "notebook_which_cant_be_parsed.ipynb")
     msg = rf"File '{re.escape(str(path))}' cannot be parsed as valid Jupyter notebook\."
     with pytest.raises(ValueError, match=msg):
         format_file_in_place(path, fast=True, mode=JUPYTER_MODE)
@@ -418,7 +442,7 @@ def test_ipynb_diff_with_change() -> None:
     result = runner.invoke(
         main,
         [
-            str(DATA_DIR / "notebook_trailing_newline.ipynb"),
+            str(get_case_path("jupyter", "notebook_trailing_newline.ipynb")),
             "--diff",
             f"--config={EMPTY_CONFIG}",
         ],
@@ -431,7 +455,7 @@ def test_ipynb_diff_with_no_change() -> None:
     result = runner.invoke(
         main,
         [
-            str(DATA_DIR / "notebook_without_changes.ipynb"),
+            str(get_case_path("jupyter", "notebook_without_changes.ipynb")),
             "--diff",
             f"--config={EMPTY_CONFIG}",
         ],
@@ -445,21 +469,16 @@ def test_cache_isnt_written_if_no_jupyter_deps_single(
 ) -> None:
     # Check that the cache isn't written to if Jupyter dependencies aren't installed.
     jupyter_dependencies_are_installed.cache_clear()
-    nb = DATA_DIR / "notebook_trailing_newline.ipynb"
+    nb = get_case_path("jupyter", "notebook_trailing_newline.ipynb")
     tmp_nb = tmp_path / "notebook.ipynb"
-    with open(nb) as src, open(tmp_nb, "w") as dst:
-        dst.write(src.read())
-    monkeypatch.setattr(
-        "black.jupyter_dependencies_are_installed", lambda verbose, quiet: False
-    )
+    tmp_nb.write_bytes(nb.read_bytes())
+    monkeypatch.setattr("black.jupyter_dependencies_are_installed", lambda warn: False)
     result = runner.invoke(
         main, [str(tmp_path / "notebook.ipynb"), f"--config={EMPTY_CONFIG}"]
     )
     assert "No Python files are present to be formatted. Nothing to do" in result.output
     jupyter_dependencies_are_installed.cache_clear()
-    monkeypatch.setattr(
-        "black.jupyter_dependencies_are_installed", lambda verbose, quiet: True
-    )
+    monkeypatch.setattr("black.jupyter_dependencies_are_installed", lambda warn: True)
     result = runner.invoke(
         main, [str(tmp_path / "notebook.ipynb"), f"--config={EMPTY_CONFIG}"]
     )
@@ -471,28 +490,26 @@ def test_cache_isnt_written_if_no_jupyter_deps_dir(
 ) -> None:
     # Check that the cache isn't written to if Jupyter dependencies aren't installed.
     jupyter_dependencies_are_installed.cache_clear()
-    nb = DATA_DIR / "notebook_trailing_newline.ipynb"
+    nb = get_case_path("jupyter", "notebook_trailing_newline.ipynb")
     tmp_nb = tmp_path / "notebook.ipynb"
-    with open(nb) as src, open(tmp_nb, "w") as dst:
-        dst.write(src.read())
+    tmp_nb.write_bytes(nb.read_bytes())
     monkeypatch.setattr(
-        "black.files.jupyter_dependencies_are_installed", lambda verbose, quiet: False
+        "black.files.jupyter_dependencies_are_installed", lambda warn: False
     )
     result = runner.invoke(main, [str(tmp_path), f"--config={EMPTY_CONFIG}"])
     assert "No Python files are present to be formatted. Nothing to do" in result.output
     jupyter_dependencies_are_installed.cache_clear()
     monkeypatch.setattr(
-        "black.files.jupyter_dependencies_are_installed", lambda verbose, quiet: True
+        "black.files.jupyter_dependencies_are_installed", lambda warn: True
     )
     result = runner.invoke(main, [str(tmp_path), f"--config={EMPTY_CONFIG}"])
     assert "reformatted" in result.output
 
 
 def test_ipynb_flag(tmp_path: pathlib.Path) -> None:
-    nb = DATA_DIR / "notebook_trailing_newline.ipynb"
+    nb = get_case_path("jupyter", "notebook_trailing_newline.ipynb")
     tmp_nb = tmp_path / "notebook.a_file_extension_which_is_definitely_not_ipynb"
-    with open(nb) as src, open(tmp_nb, "w") as dst:
-        dst.write(src.read())
+    tmp_nb.write_bytes(nb.read_bytes())
     result = runner.invoke(
         main,
         [
@@ -507,7 +524,7 @@ def test_ipynb_flag(tmp_path: pathlib.Path) -> None:
 
 
 def test_ipynb_and_pyi_flags() -> None:
-    nb = DATA_DIR / "notebook_trailing_newline.ipynb"
+    nb = get_case_path("jupyter", "notebook_trailing_newline.ipynb")
     result = runner.invoke(
         main,
         [
@@ -524,8 +541,8 @@ def test_ipynb_and_pyi_flags() -> None:
 
 
 def test_unable_to_replace_magics(monkeypatch: MonkeyPatch) -> None:
-    src = "%%time\na = 'foo'"
-    monkeypatch.setattr("black.handle_ipynb_magics.TOKEN_HEX", lambda _: "foo")
+    src = '%%time\na = b"foo"'
+    monkeypatch.setattr("secrets.token_hex", lambda _: "foo")
     with pytest.raises(
         AssertionError, match="Black was not able to replace IPython magic"
     ):

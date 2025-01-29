@@ -14,11 +14,11 @@ Specifying the name of the default behavior in `--run-optional=` is harmless.
 Adapted from https://pypi.org/project/pytest-optional-tests/, (c) 2019 Reece Hart
 """
 
-from functools import lru_cache
 import itertools
 import logging
 import re
-from typing import FrozenSet, List, Set, TYPE_CHECKING
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -26,20 +26,28 @@ try:
     from pytest import StashKey
 except ImportError:
     # pytest < 7
-    from _pytest.store import StoreKey as StashKey
+    #
+    # "isort: skip" is needed or it moves the "type: ignore" to the following line
+    # because of the line length, and then mypy complains.
+    # Of course, adding the "isort: skip" means that
+    # flake8-bugbear then also complains about the line length,
+    # so we *also* need a "noqa" comment for good measure :)
+    from _pytest.store import (  # type: ignore[import-not-found, no-redef]  # isort: skip  # noqa: B950
+        StoreKey as StashKey,
+    )
 
 log = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from _pytest.config.argparsing import Parser
     from _pytest.config import Config
+    from _pytest.config.argparsing import Parser
     from _pytest.mark.structures import MarkDecorator
     from _pytest.nodes import Node
 
 
-ALL_POSSIBLE_OPTIONAL_MARKERS = StashKey[FrozenSet[str]]()
-ENABLED_OPTIONAL_MARKERS = StashKey[FrozenSet[str]]()
+ALL_POSSIBLE_OPTIONAL_MARKERS = StashKey[frozenset[str]]()
+ENABLED_OPTIONAL_MARKERS = StashKey[frozenset[str]]()
 
 
 def pytest_addoption(parser: "Parser") -> None:
@@ -61,7 +69,7 @@ def pytest_configure(config: "Config") -> None:
     """
     ot_ini = config.inicfg.get("optional-tests") or []
     ot_markers = set()
-    ot_run: Set[str] = set()
+    ot_run: set[str] = set()
     if isinstance(ot_ini, str):
         ot_ini = ot_ini.strip().split("\n")
     marker_re = re.compile(r"^\s*(?P<no>no_)?(?P<marker>\w+)(:\s*(?P<description>.*))?")
@@ -85,7 +93,7 @@ def pytest_configure(config: "Config") -> None:
     ot_run |= {no(excluded) for excluded in ot_markers - ot_run}
     ot_markers |= {no(m) for m in ot_markers}
 
-    log.info("optional tests to run:", ot_run)
+    log.info("optional tests to run: %s", ot_run)
     unknown_tests = ot_run - ot_markers
     if unknown_tests:
         raise ValueError(f"Unknown optional tests wanted: {unknown_tests!r}")
@@ -95,7 +103,7 @@ def pytest_configure(config: "Config") -> None:
     store[ENABLED_OPTIONAL_MARKERS] = frozenset(ot_run)
 
 
-def pytest_collection_modifyitems(config: "Config", items: "List[Node]") -> None:
+def pytest_collection_modifyitems(config: "Config", items: "list[Node]") -> None:
     store = config._store
     all_possible_optional_markers = store[ALL_POSSIBLE_OPTIONAL_MARKERS]
     enabled_optional_markers = store[ENABLED_OPTIONAL_MARKERS]
@@ -107,17 +115,17 @@ def pytest_collection_modifyitems(config: "Config", items: "List[Node]") -> None
             optional_markers_on_test & enabled_optional_markers
         ):
             continue
-        log.info("skipping non-requested optional", item)
+        log.info("skipping non-requested optional: %s", item)
         item.add_marker(skip_mark(frozenset(optional_markers_on_test)))
 
 
-@lru_cache()
-def skip_mark(tests: FrozenSet[str]) -> "MarkDecorator":
+@lru_cache
+def skip_mark(tests: frozenset[str]) -> "MarkDecorator":
     names = ", ".join(sorted(tests))
     return pytest.mark.skip(reason=f"Marked with disabled optional tests ({names})")
 
 
-@lru_cache()
+@lru_cache
 def no(name: str) -> str:
     if name.startswith("no_"):
         return name[len("no_") :]

@@ -1,92 +1,19 @@
+from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any, Iterator, List
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 import black
+from black.mode import TargetVersion
 from tests.util import (
-    DEFAULT_MODE,
-    PY36_VERSIONS,
-    THIS_DIR,
+    all_data_cases,
     assert_format,
     dump_to_stderr,
     read_data,
-    all_data_cases,
+    read_data_with_mode,
 )
-
-PY310_CASES: List[str] = [
-    "starred_for_target",
-    "pattern_matching_simple",
-    "pattern_matching_complex",
-    "pattern_matching_extras",
-    "pattern_matching_style",
-    "pattern_matching_generic",
-    "parenthesized_context_managers",
-]
-
-PY311_CASES: List[str] = [
-    "pep_654",
-    "pep_654_style",
-]
-
-PREVIEW_CASES: List[str] = [
-    # string processing
-    "cantfit",
-    "comments7",
-    "comments8",
-    "long_strings",
-    "long_strings__edge_case",
-    "long_strings__regression",
-    "percent_precedence",
-    "remove_except_parens",
-    "remove_for_brackets",
-    "one_element_subscript",
-    "remove_await_parens",
-    "return_annotation_brackets",
-    "docstring_preview",
-]
-
-SOURCES: List[str] = [
-    "src/black/__init__.py",
-    "src/black/__main__.py",
-    "src/black/brackets.py",
-    "src/black/cache.py",
-    "src/black/comments.py",
-    "src/black/concurrency.py",
-    "src/black/const.py",
-    "src/black/debug.py",
-    "src/black/files.py",
-    "src/black/linegen.py",
-    "src/black/lines.py",
-    "src/black/mode.py",
-    "src/black/nodes.py",
-    "src/black/numerics.py",
-    "src/black/output.py",
-    "src/black/parsing.py",
-    "src/black/report.py",
-    "src/black/rusty.py",
-    "src/black/strings.py",
-    "src/black/trans.py",
-    "src/blackd/__init__.py",
-    "src/blib2to3/pygram.py",
-    "src/blib2to3/pytree.py",
-    "src/blib2to3/pgen2/conv.py",
-    "src/blib2to3/pgen2/driver.py",
-    "src/blib2to3/pgen2/grammar.py",
-    "src/blib2to3/pgen2/literals.py",
-    "src/blib2to3/pgen2/parse.py",
-    "src/blib2to3/pgen2/pgen.py",
-    "src/blib2to3/pgen2/tokenize.py",
-    "src/blib2to3/pgen2/token.py",
-    "setup.py",
-    "tests/test_black.py",
-    "tests/test_blackd.py",
-    "tests/test_format.py",
-    "tests/optional.py",
-    "tests/util.py",
-    "tests/conftest.py",
-]
 
 
 @pytest.fixture(autouse=True)
@@ -95,30 +22,59 @@ def patch_dump_to_file(request: Any) -> Iterator[None]:
         yield
 
 
-def check_file(filename: str, mode: black.Mode, *, data: bool = True) -> None:
-    source, expected = read_data(filename, data=data)
-    assert_format(source, expected, mode, fast=False)
+def check_file(subdir: str, filename: str, *, data: bool = True) -> None:
+    args, source, expected = read_data_with_mode(subdir, filename, data=data)
+    assert_format(
+        source,
+        expected,
+        args.mode,
+        fast=args.fast,
+        minimum_version=args.minimum_version,
+        lines=args.lines,
+        no_preview_line_length_1=args.no_preview_line_length_1,
+    )
+    if args.minimum_version is not None:
+        major, minor = args.minimum_version
+        target_version = TargetVersion[f"PY{major}{minor}"]
+        mode = replace(args.mode, target_versions={target_version})
+        assert_format(
+            source,
+            expected,
+            mode,
+            fast=args.fast,
+            minimum_version=args.minimum_version,
+            lines=args.lines,
+            no_preview_line_length_1=args.no_preview_line_length_1,
+        )
 
 
-@pytest.mark.parametrize("filename", all_data_cases("simple_cases"))
+@pytest.mark.filterwarnings("ignore:invalid escape sequence.*:DeprecationWarning")
+@pytest.mark.parametrize("filename", all_data_cases("cases"))
 def test_simple_format(filename: str) -> None:
-    check_file(filename, DEFAULT_MODE)
+    check_file("cases", filename)
 
 
-@pytest.mark.parametrize("filename", PREVIEW_CASES)
-def test_preview_format(filename: str) -> None:
-    check_file(filename, black.Mode(preview=True))
-
-
-@pytest.mark.parametrize("filename", SOURCES)
-def test_source_is_formatted(filename: str) -> None:
-    path = THIS_DIR.parent / filename
-    check_file(str(path), DEFAULT_MODE, data=False)
+@pytest.mark.parametrize("filename", all_data_cases("line_ranges_formatted"))
+def test_line_ranges_line_by_line(filename: str) -> None:
+    args, source, expected = read_data_with_mode("line_ranges_formatted", filename)
+    assert (
+        source == expected
+    ), "Test cases in line_ranges_formatted must already be formatted."
+    line_count = len(source.splitlines())
+    for line in range(1, line_count + 1):
+        assert_format(
+            source,
+            expected,
+            args.mode,
+            fast=args.fast,
+            minimum_version=args.minimum_version,
+            lines=[(line, line)],
+        )
 
 
 # =============== #
-# Complex cases
-# ============= #
+# Unusual cases
+# =============== #
 
 
 def test_empty() -> None:
@@ -126,122 +82,12 @@ def test_empty() -> None:
     assert_format(source, expected)
 
 
-def test_pep_572() -> None:
-    source, expected = read_data("pep_572")
-    assert_format(source, expected, minimum_version=(3, 8))
-
-
-def test_pep_572_remove_parens() -> None:
-    source, expected = read_data("pep_572_remove_parens")
-    assert_format(source, expected, minimum_version=(3, 8))
-
-
-def test_pep_572_do_not_remove_parens() -> None:
-    source, expected = read_data("pep_572_do_not_remove_parens")
-    # the AST safety checks will fail, but that's expected, just make sure no
-    # parentheses are touched
-    assert_format(source, expected, fast=True)
-
-
-@pytest.mark.parametrize("major, minor", [(3, 9), (3, 10)])
-def test_pep_572_newer_syntax(major: int, minor: int) -> None:
-    source, expected = read_data(f"pep_572_py{major}{minor}")
-    assert_format(source, expected, minimum_version=(major, minor))
-
-
-def test_pep_570() -> None:
-    source, expected = read_data("pep_570")
-    assert_format(source, expected, minimum_version=(3, 8))
-
-
-def test_remove_with_brackets() -> None:
-    source, expected = read_data("remove_with_brackets")
-    assert_format(
-        source,
-        expected,
-        black.Mode(preview=True),
-        minimum_version=(3, 9),
-    )
-
-
-@pytest.mark.parametrize("filename", PY310_CASES)
-def test_python_310(filename: str) -> None:
-    source, expected = read_data(filename)
-    mode = black.Mode(target_versions={black.TargetVersion.PY310})
-    assert_format(source, expected, mode, minimum_version=(3, 10))
-
-
-def test_python_310_without_target_version() -> None:
-    source, expected = read_data("pattern_matching_simple")
-    mode = black.Mode()
-    assert_format(source, expected, mode, minimum_version=(3, 10))
-
-
 def test_patma_invalid() -> None:
-    source, expected = read_data("pattern_matching_invalid")
+    source, expected = read_data("miscellaneous", "pattern_matching_invalid")
     mode = black.Mode(target_versions={black.TargetVersion.PY310})
     with pytest.raises(black.parsing.InvalidInput) as exc_info:
         assert_format(source, expected, mode, minimum_version=(3, 10))
 
-    exc_info.match("Cannot parse: 10:11")
-
-
-@pytest.mark.parametrize("filename", PY311_CASES)
-def test_python_311(filename: str) -> None:
-    source, expected = read_data(filename)
-    mode = black.Mode(target_versions={black.TargetVersion.PY311})
-    assert_format(source, expected, mode, minimum_version=(3, 11))
-
-
-def test_python_2_hint() -> None:
-    with pytest.raises(black.parsing.InvalidInput) as exc_info:
-        assert_format("print 'daylily'", "print 'daylily'")
-    exc_info.match(black.parsing.PY2_HINT)
-
-
-def test_docstring_no_string_normalization() -> None:
-    """Like test_docstring but with string normalization off."""
-    source, expected = read_data("docstring_no_string_normalization")
-    mode = replace(DEFAULT_MODE, string_normalization=False)
-    assert_format(source, expected, mode)
-
-
-def test_long_strings_flag_disabled() -> None:
-    """Tests for turning off the string processing logic."""
-    source, expected = read_data("long_strings_flag_disabled")
-    mode = replace(DEFAULT_MODE, experimental_string_processing=False)
-    assert_format(source, expected, mode)
-
-
-def test_numeric_literals() -> None:
-    source, expected = read_data("numeric_literals")
-    mode = replace(DEFAULT_MODE, target_versions=PY36_VERSIONS)
-    assert_format(source, expected, mode)
-
-
-def test_numeric_literals_ignoring_underscores() -> None:
-    source, expected = read_data("numeric_literals_skip_underscores")
-    mode = replace(DEFAULT_MODE, target_versions=PY36_VERSIONS)
-    assert_format(source, expected, mode)
-
-
-def test_stub() -> None:
-    mode = replace(DEFAULT_MODE, is_pyi=True)
-    source, expected = read_data("stub.pyi")
-    assert_format(source, expected, mode)
-
-
-def test_python38() -> None:
-    source, expected = read_data("python38")
-    assert_format(source, expected, minimum_version=(3, 8))
-
-
-def test_python39() -> None:
-    source, expected = read_data("python39")
-    assert_format(source, expected, minimum_version=(3, 9))
-
-
-def test_power_op_newline() -> None:
-    # requires line_length=0
-    source, expected = read_data("power_op_newline")
-    assert_format(source, expected, mode=black.Mode(line_length=0))
+    exc_info.match(
+        "Cannot parse for target version Python 3.10: 10:11:     case a := b:"
+    )

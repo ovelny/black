@@ -17,29 +17,36 @@ Python language and, occasionally, in response to user feedback. Large-scale sty
 preferences presented in {doc}`current_style` are very unlikely to change, but minor
 style aspects and details might change according to the stability policy presented
 below. Ongoing style considerations are tracked on GitHub with the
-[design](https://github.com/psf/black/labels/T%3A%20design) issue label.
+[style](https://github.com/psf/black/labels/T%3A%20style) issue label.
+
+(labels/stability-policy)=
 
 ## Stability Policy
 
 The following policy applies for the _Black_ code style, in non pre-release versions of
 _Black_:
 
-- The same code, formatted with the same options, will produce the same output for all
-  releases in a given calendar year.
+- If code has been formatted with _Black_, it will remain unchanged when formatted with
+  the same options using any other release in the same calendar year.
 
-  This means projects can safely use `black ~= 22.0` without worrying about major
-  formatting changes disrupting their project in 2022. We may still fix bugs where
-  _Black_ crashes on some code, and make other improvements that do not affect
-  formatting.
+  This means projects can safely use `black ~= 22.0` without worrying about formatting
+  changes disrupting their project in 2022. We may still fix bugs where _Black_ crashes
+  on some code, and make other improvements that do not affect formatting.
+
+  In rare cases, we may make changes affecting code that has not been previously
+  formatted with _Black_. For example, we have had bugs where we accidentally removed
+  some comments. Such bugs can be fixed without breaking the stability policy.
 
 - The first release in a new calendar year _may_ contain formatting changes, although
   these will be minimised as much as possible. This is to allow for improved formatting
   enabled by newer Python language syntax as well as due to improvements in the
   formatting logic.
 
-- The `--preview` flag is exempt from this policy. There are no guarantees around the
-  stability of the output with that flag passed into _Black_. This flag is intended for
-  allowing experimentation with the proposed changes to the _Black_ code style.
+- The `--preview` and `--unstable` flags are exempt from this policy. There are no
+  guarantees around the stability of the output with these flags passed into _Black_.
+  They are intended for allowing experimentation with proposed changes to the _Black_
+  code style. The `--preview` style at the end of a year should closely match the stable
+  style for the next year, but we may always make changes.
 
 Documentation for both the current and future styles can be found:
 

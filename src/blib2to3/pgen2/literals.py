@@ -5,10 +5,7 @@
 
 import re
 
-from typing import Dict, Match, Text
-
-
-simple_escapes: Dict[Text, Text] = {
+simple_escapes: dict[str, str] = {
     "a": "\a",
     "b": "\b",
     "f": "\f",
@@ -22,7 +19,7 @@ simple_escapes: Dict[Text, Text] = {
 }
 
 
-def escape(m: Match[Text]) -> Text:
+def escape(m: re.Match[str]) -> str:
     all, tail = m.group(0, 1)
     assert all.startswith("\\")
     esc = simple_escapes.get(tail)
@@ -44,7 +41,7 @@ def escape(m: Match[Text]) -> Text:
     return chr(i)
 
 
-def evalString(s: Text) -> Text:
+def evalString(s: str) -> str:
     assert s.startswith("'") or s.startswith('"'), repr(s[:1])
     q = s[0]
     if s[:3] == q * 3:
